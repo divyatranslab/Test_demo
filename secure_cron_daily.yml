@@ -32,11 +32,5 @@
         path: /etc/cron.daily
         owner: root
         group: root
-        mode: "0700"          # og‑rwx
+        mode: "0700"          
         state: directory
-
-    - name: Reboot host to apply settings
-      reboot:
-        reboot_timeout: 300
-        test_command: uname -a
-      when: backup_result is succeeded

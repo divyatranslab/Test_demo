@@ -17,9 +17,3 @@
         mode: '0600'
         state: file
 
-    - name: Reboot the system to apply changes
-      reboot:
-        reboot_timeout: 300
-        test_command: uptime
-      when: backup_result is success
-

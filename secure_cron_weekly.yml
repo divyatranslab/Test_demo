@@ -1,0 +1,42 @@
+---
+- name: Secure /etc/cron.weekly, back it up, and reboot
+  hosts: all
+  become: yes
+  vars:
+    ts: "{{ ansible_date_time.iso8601_basic }}"
+    backup_root: "/var/backups/cron_weekly"
+    backup_dir: "{{ backup_root }}/cron_weekly_{{ ts }}"
+
+  tasks:
+    - name: Ensure backup root exists
+      file:
+        path: "{{ backup_root }}"
+        owner: root
+        group: root
+        mode: "0700"
+        state: directory
+
+    - name: Copy /etc/cron.weekly to timestamped backup directory
+      synchronize:
+        src: /etc/cron.weekly/
+        dest: "{{ backup_dir }}/"
+        recursive: yes
+        owner: yes
+        group: yes
+        perms: yes
+      delegate_to: "{{ inventory_hostname }}"
+      register: backup_result
+
+    - name: Set correct ownership and mode on /etc/cron.weekly
+      file:
+        path: /etc/cron.weekly
+        owner: root
+        group: root
+        mode: "0700"          
+        state: directory
+
+    - name: Reboot host
+      reboot:
+        reboot_timeout: 300
+        test_command: uname -a
+      when: backup_result is succeeded

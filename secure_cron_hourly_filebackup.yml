@@ -1,0 +1,42 @@
+---
+- name: Secure /etc/cron.hourly with file‑style backup and reboot
+  hosts: all
+  become: yes
+  vars:
+    ts: "{{ ansible_date_time.iso8601_basic }}"
+    backup_dir_root: "/var/backups/cron_hourly"
+    backup_dir: "{{ backup_dir_root }}/cron_hourly_{{ ts }}"
+
+  tasks:
+    - name: Ensure backup root directory exists
+      file:
+        path: "{{ backup_dir_root }}"
+        owner: root
+        group: root
+        mode: "0700"
+        state: directory
+
+    - name: Copy /etc/cron.hourly to timestamped backup directory
+      synchronize:
+        src: /etc/cron.hourly/
+        dest: "{{ backup_dir }}/"
+        recursive: yes
+        owner: yes
+        group: yes
+        perms: yes
+      delegate_to: "{{ inventory_hostname }}"
+      register: backup_result
+
+    - name: Set correct ownership and permissions on /etc/cron.hourly
+      file:
+        path: /etc/cron.hourly
+        owner: root
+        group: root
+        mode: "0700"
+        state: directory
+
+    - name: Reboot the system to apply changes
+      reboot:
+        reboot_timeout: 300
+        test_command: uname -a
+      when: backup_result is succeeded

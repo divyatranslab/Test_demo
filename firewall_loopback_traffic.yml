@@ -1,6 +1,6 @@
 ---
 - name: Enforce CIS 3.4.2.2 loopback firewall rules
-  hosts: target
+  hosts: all
   become: true
   vars:
     ts: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"

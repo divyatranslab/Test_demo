@@ -35,8 +35,4 @@
         mode: "0700"            
         state: directory
 
-    - name: Reboot host to apply changes
-      reboot:
-        reboot_timeout: 300
-        test_command: uname -a
-      when: backup_result is succeeded
+  

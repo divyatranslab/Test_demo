@@ -6,9 +6,9 @@
     ts: "{{ ansible_date_time.iso8601_basic }}"
     backup_dir: "/var/backups/nftables"
     backup_file: "{{ backup_dir }}/nft_ruleset_{{ ts }}.save"
-    table: "filter"               
-    ssh_port: 22                  
-    default_policy: "drop"        
+    table: "filter"           
+    ssh_port: 22
+    default_policy: "drop"     
 
   tasks:
   - name: Ensure backup directory exists
@@ -20,7 +20,9 @@
       state: directory
 
   - name: Save running nftables ruleset to timestamped file
-    command: "nft -n list ruleset > {{ backup_file }}"
+    shell: "nft -n list ruleset > {{ backup_file }}"
+    args:
+      warn: false
     register: backup_result
     changed_when: false
 
@@ -29,9 +31,9 @@
     args:
       warn: false
     register: create_table
-    changed_when: "'created' in create_table.stderr or create_table.rc == 0"
+    changed_when: "'created' in create_table.stderr"
     failed_when: false
-    
+
   - name: Ensure base chain {{ item }} exists
     command: >
       nft --handle create chain inet {{ table }} {{ item }}
@@ -42,7 +44,7 @@
     register: create_chain
     changed_when: "'created' in create_chain.results[itemloop.index0].stderr"
     failed_when: false
-    
+
   - name: Add SSH accept rule if not present
     command: >
       nft add rule inet {{ table }} input tcp dport {{ ssh_port }} ct state new,established accept
@@ -52,12 +54,15 @@
     changed_when: "'added' in ssh_rule.stderr"
     failed_when: false
 
-  - name: Save ruleset to /etc/sysconfig/nftables.conf 
-    command: "nft list ruleset > /etc/sysconfig/nftables.conf"
+  - name: Save ruleset to persistent config file
+    shell: "nft list ruleset > /etc/sysconfig/nftables.conf"
+    args:
+      warn: false
     when: backup_result is succeeded
 
-  - name: Reboot host to apply nftables changes
+  - name: Reboot host
     reboot:
       reboot_timeout: 300
       test_command: "nft list tables"
     when: backup_result is succeeded
+

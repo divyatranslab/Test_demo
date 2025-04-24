@@ -2,18 +2,18 @@
 - name: Enforce CIS 3.4.2.2 loopback firewall rules
   hosts: all
   become: true
-  gather_facts: yes          # standard facts (CPU, memory, etc.)
+  gather_facts: yes         
 
   vars:
     ts: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
-    restore_from_latest_backup: false   # set to true for rollback
+    restore_from_latest_backup: false  
 
   pre_tasks:
     - name: Gather service facts (systemd)
       ansible.builtin.service_facts:
 
     - name: Gather sysctl facts
-      ansible.builtin.sysctl_facts:
+      community.general.sysctl_facts:        
 
     - name: Determine active firewall utility
       set_fact:
@@ -131,4 +131,5 @@
         - fw_type == 'nftables'
         - (ansible_facts.sysctl['net.ipv6.conf.all.disable_ipv6'] | default('0')) == '0'
         - not restore_from_latest_backup
+
 

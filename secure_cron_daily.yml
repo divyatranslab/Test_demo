@@ -1,0 +1,42 @@
+---
+- name: Secure /etc/cron.daily with file‑style backup and reboot
+  hosts: all
+  become: yes
+  vars:
+    ts: "{{ ansible_date_time.iso8601_basic }}"
+    backup_root: "/var/backups/cron_daily"
+    backup_dir: "{{ backup_root }}/cron_daily_{{ ts }}"
+
+  tasks:
+    - name: Ensure backup root exists
+      file:
+        path: "{{ backup_root }}"
+        owner: root
+        group: root
+        mode: "0700"
+        state: directory
+
+    - name: Copy /etc/cron.daily to timestamped backup dir
+      synchronize:
+        src: /etc/cron.daily/
+        dest: "{{ backup_dir }}/"
+        recursive: yes
+        owner: yes
+        group: yes
+        perms: yes
+      delegate_to: "{{ inventory_hostname }}"
+      register: backup_result
+
+    - name: Set correct ownership & mode on /etc/cron.daily
+      file:
+        path: /etc/cron.daily
+        owner: root
+        group: root
+        mode: "0700"          # og‑rwx
+        state: directory
+
+    - name: Reboot host to apply settings
+      reboot:
+        reboot_timeout: 300
+        test_command: uname -a
+      when: backup_result is succeeded

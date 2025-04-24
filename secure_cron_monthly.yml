@@ -1,0 +1,42 @@
+---
+- name: Secure /etc/cron.monthly, back it up, and reboot
+  hosts: all
+  become: yes
+  vars:
+    ts: "{{ ansible_date_time.iso8601_basic }}"         
+    backup_root: "/var/backups/cron_monthly"
+    backup_dir: "{{ backup_root }}/cron_monthly_{{ ts }}"
+
+  tasks:
+    - name: Create backup root directory
+      file:
+        path: "{{ backup_root }}"
+        owner: root
+        group: root
+        mode: "0700"
+        state: directory
+
+    - name: Copy /etc/cron.monthly to timestamped backup dir
+      synchronize:
+        src: /etc/cron.monthly/
+        dest: "{{ backup_dir }}/"
+        recursive: yes
+        owner: yes
+        group: yes
+        perms: yes
+      delegate_to: "{{ inventory_hostname }}"
+      register: backup_result
+
+    - name: Set correct ownership and permissions on /etc/cron.monthly
+      file:
+        path: /etc/cron.monthly
+        owner: root
+        group: root
+        mode: "0700"            
+        state: directory
+
+    - name: Reboot host to apply changes
+      reboot:
+        reboot_timeout: 300
+        test_command: uname -a
+      when: backup_result is succeeded

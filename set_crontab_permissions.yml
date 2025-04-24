@@ -1,0 +1,27 @@
+---
+- name: Ensure correct permissions on /etc/crontab
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Backup /etc/crontab with a timestamp
+      command: cp /etc/crontab /etc/crontab.backup_{{ ansible_date_time.iso8601_basic }}
+      register: backup_result
+      ignore_errors: yes
+
+    - name: Ensure /etc/crontab has correct ownership
+      file:
+        path: /etc/crontab
+        owner: root
+        group: root
+        mode: '0644'
+        state: file
+
+    - name: Set correct permissions for /etc/crontab (remove others' read/write/execute)
+      command: chmod og-rwx /etc/crontab
+
+    - name: Reboot the system to apply changes
+      reboot:
+        reboot_timeout: 300
+        test_command: uptime
+      when: backup_result is success

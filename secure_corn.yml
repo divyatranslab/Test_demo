@@ -34,36 +34,15 @@
         mode: '0600'
         state: file
 
-    - name: Ensure cron directory permissions and backups
-      vars:
-        backup_dir: "{{ item.backup_root }}/{{ item.name }}_{{ ts }}"
-      block:
-        - name: Ensure backup root directory exists for {{ item.name }}
-          file:
-            path: "{{ item.backup_root }}"
-            owner: root
-            group: root
-            mode: "0700"
-            state: directory
-
-        - name: Backup {{ item.name }} directory to timestamped backup
-          synchronize:
-            src: "{{ item.path }}/"
-            dest: "{{ backup_dir }}/"
-            recursive: yes
-            owner: yes
-            group: yes
-            perms: yes
-          delegate_to: "{{ inventory_hostname }}"
-
-        - name: Set correct permissions on {{ item.name }}
-          file:
-            path: "{{ item.path }}"
-            owner: root
-            group: root
-            mode: "0700"
-            state: directory
+    - name: Include task file to handle cron dir backups and permissions
+      include_tasks: cron_dir_permissions.yml
       loop: "{{ cron_dirs }}"
       loop_control:
         label: "{{ item.name }}"
+      vars:
+        cron_name: "{{ item.name }}"
+        cron_path: "{{ item.path }}"
+        cron_backup_root: "{{ item.backup_root }}"
+        ts: "{{ ts }}"
+
 

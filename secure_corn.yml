@@ -1,0 +1,64 @@
+---
+- name: Secure cron configurations and ensure correct permissions
+  hosts: all
+  become: yes
+  vars:
+    ts: "{{ ansible_date_time.iso8601_basic }}"
+    cron_dirs:
+      - name: cron.hourly
+        path: /etc/cron.hourly
+        backup_root: /var/backups/cron_hourly
+      - name: cron.daily
+        path: /etc/cron.daily
+        backup_root: /var/backups/cron_daily
+      - name: cron.weekly
+        path: /etc/cron.weekly
+        backup_root: /var/backups/cron_weekly
+      - name: cron.monthly
+        path: /etc/cron.monthly
+        backup_root: /var/backups/cron_monthly
+      - name: cron.d
+        path: /etc/cron.d
+        backup_root: /var/backups/cron_d
+
+  tasks:
+    - name: Backup /etc/crontab with timestamp
+      command: cp /etc/crontab /etc/crontab.backup_{{ ts }}
+      ignore_errors: yes
+
+    - name: Ensure permissions on /etc/crontab
+      file:
+        path: /etc/crontab
+        owner: root
+        group: root
+        mode: '0600'
+        state: file
+
+    - name: Ensure backup directories and permissions are set, and content is backed up
+      block:
+        - name: Ensure backup root directory exists for {{ item.name }}
+          file:
+            path: "{{ item.backup_root }}"
+            owner: root
+            group: root
+            mode: "0700"
+            state: directory
+
+        - name: Backup {{ item.name }} directory to timestamped backup
+          synchronize:
+            src: "{{ item.path }}/"
+            dest: "{{ item.backup_root }}/{{ item.name }}_{{ ts }}/"
+            recursive: yes
+            owner: yes
+            group: yes
+            perms: yes
+          delegate_to: "{{ inventory_hostname }}"
+
+        - name: Set correct permissions on {{ item.name }}
+          file:
+            path: "{{ item.path }}"
+            owner: root
+            group: root
+            mode: "0700"
+            state: directory
+      loop: "{{ cron_dirs }}"

@@ -34,38 +34,41 @@
         mode: '0600'
         state: file
 
-    - name: Backup and secure cron directories
-      vars:
-        backup_dir: "{{ item.backup_root }}/{{ item.name }}_{{ ts }}"
-      block:
-        - name: Ensure backup root directory exists
-          file:
-            path: "{{ item.backup_root }}"
-            owner: root
-            group: root
-            mode: "0700"
-            state: directory
-
-        - name: Backup cron directory
-          synchronize:
-            src: "{{ item.path }}/"
-            dest: "{{ backup_dir }}/"
-            recursive: yes
-            owner: yes
-            group: yes
-            perms: yes
-          delegate_to: "{{ inventory_hostname }}"
-
-        - name: Set ownership and permissions on cron directory
-          file:
-            path: "{{ item.path }}"
-            owner: root
-            group: root
-            mode: "0700"
-            state: directory
+    - name: Ensure backup root directories exist
+      file:
+        path: "{{ item.backup_root }}"
+        owner: root
+        group: root
+        mode: "0700"
+        state: directory
       loop: "{{ cron_dirs }}"
       loop_control:
         label: "{{ item.name }}"
+
+    - name: Backup cron directory
+      synchronize:
+        src: "{{ item.path }}/"
+        dest: "{{ item.backup_root }}/{{ item.name }}_{{ ts }}/"
+        recursive: yes
+        owner: yes
+        group: yes
+        perms: yes
+      delegate_to: "{{ inventory_hostname }}"
+      loop: "{{ cron_dirs }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Set ownership and permissions on cron directory
+      file:
+        path: "{{ item.path }}"
+        owner: root
+        group: root
+        mode: "0700"
+        state: directory
+      loop: "{{ cron_dirs }}"
+      loop_control:
+        label: "{{ item.name }}"
+
 
 
 

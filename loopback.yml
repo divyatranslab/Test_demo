@@ -1,0 +1,150 @@
+---
+- name: Enforce CIS 3.4.2.2 loopback firewall rules
+  hosts: all
+  become: true
+  gather_facts: yes
+ 
+  vars:
+    ts: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+    restore_from_latest_backup: false
+ 
+  pre_tasks:
+    - name: Gather service facts (systemd)
+      ansible.builtin.service_facts:
+ 
+    - name: Read net.ipv6.conf.all.disable_ipv6 (0 = IPv6 enabled)
+      ansible.builtin.command: sysctl -n net.ipv6.conf.all.disable_ipv6
+      register: ipv6_flag
+      changed_when: false  # reading value shouldn't mark host changed
+      failed_when: false  # tolerate missing key
+ 
+    - name: Set fact ipv6_disabled ('1' if flag missing or non‑zero)
+      ansible.builtin.set_fact:
+        ipv6_disabled: "{{ (ipv6_flag.stdout | default('1')).strip() }}"
+ 
+    - name: Determine active firewall utility
+      ansible.builtin.set_fact:
+        fw_type: >-
+          {{ 'firewalld'
+             if ('firewalld.service' in ansible_facts.services and
+                  ansible_facts.services['firewalld.service'].status == 'enabled')
+             else 'nftables'
+             if ('nftables.service' in ansible_facts.services and
+                  ansible_facts.services['nftables.service'].status == 'enabled')
+             else 'none' }}
+ 
+    - name: Fail if both or neither firewall utilities are enabled
+      ansible.builtin.fail:
+        msg: >-
+          Exactly one of firewalld or nftables must be enabled (CIS 3.4.1).
+          firewalld={{ 'firewalld.service' in ansible_facts.services |
+                       ternary(ansible_facts.services['firewalld.service'].status, 'absent') }},
+          nftables={{ 'nftables.service' in ansible_facts.services |
+                       ternary(ansible_facts.services['nftables.service'].status, 'absent') }}
+      when: fw_type == 'none' or
+            ( 'firewalld.service' in ansible_facts.services and
+              'nftables.service' in ansible_facts.services and
+              ansible_facts.services['firewalld.service'].status == 'enabled' and
+              ansible_facts.services['nftables.service'].status == 'enabled')
+ 
+  tasks:
+ 
+    - block:
+        - name: Backup firewalld runtime config
+          ansible.builtin.command: firewall-cmd --runtime-to-permanent
+          when: fw_type == 'firewalld'
+ 
+        - name: Archive /etc/firewalld to timestamped tarball
+          ansible.builtin.archive:
+            path: /etc/firewalld
+            dest: "/root/fw-backup-{{ ts }}.tar.gz"
+            format: gz
+          when: fw_type == 'firewalld'
+ 
+        - name: Backup nftables ruleset to file
+          ansible.builtin.command: "nft list ruleset > /root/fw-backup-{{ ts }}.nft"
+          when: fw_type == 'nftables'
+ 
+      when: not restore_from_latest_backup
+ 
+    - block:
+        - name: Find most recent backup
+          ansible.builtin.find:
+            paths: /root
+            patterns: "fw-backup-*.tar.gz,fw-backup-*.nft"
+            recurse: no
+            age_stamp: mtime
+          register: backup_files
+ 
+        - name: Fail if no backup found
+          ansible.builtin.fail:
+            msg: No backup files located in /root.
+          when: backup_files.matched == 0
+ 
+        - name: Restore firewalld backup
+          ansible.builtin.unarchive:
+            src: "{{ backup_files.files | sort(attribute='mtime') | last.path }}"
+            dest: /
+            extra_opts: [--strip-components=3]
+          when: fw_type == 'firewalld'
+ 
+        - name: Restore nftables backup
+          ansible.builtin.copy:
+            src: "{{ backup_files.files | sort(attribute='mtime') | last.path }}"
+            dest: /root/restore.nft
+          when: fw_type == 'nftables'
+ 
+        - name: Load restored nftables ruleset
+          ansible.builtin.command: "nft -f /root/restore.nft"
+          when: fw_type == 'nftables'
+ 
+      when: restore_from_latest_backup
+ 
+    - name: Accept traffic on loopback interface (firewalld)
+      ansible.builtin.command: firewall-cmd --permanent --zone=trusted --add-interface=lo
+      when: fw_type == 'firewalld' and not restore_from_latest_backup
+      notify: reload firewalld
+ 
+    - name: Drop IPv4 traffic from 127.0.0.0/8 to non‑loopback (firewalld)
+      ansible.builtin.command: >-
+        firewall-cmd --permanent --add-rich-rule='rule family=ipv4
+        source address="127.0.0.1" destination not address="127.0.0.1" drop'
+      when: fw_type == 'firewalld' and not restore_from_latest_backup
+      notify: reload firewalld
+ 
+    - name: Drop IPv6 traffic from ::1 to non‑loopback (firewalld, if IPv6 enabled)
+      ansible.builtin.command: >-
+        firewall-cmd --permanent --add-rich-rule='rule family=ipv6
+        source address="::1" destination not address="::1" drop'
+      when:
+        - fw_type == 'firewalld'
+        - ipv6_disabled == '0'
+        - not restore_from_latest_backup
+      notify: reload firewalld
+ 
+    - name: Ensure nftables accept loopback
+      ansible.builtin.command: nft add rule inet filter input iif lo accept
+      when: fw_type == 'nftables' and not restore_from_latest_backup
+      notify: reload nftables
+ 
+    - name: Ensure nftables drop IPv4 loopback spoof
+      ansible.builtin.command: nft add rule inet filter input ip saddr 127.0.0.0/8 counter drop
+      when: fw_type == 'nftables' and not restore_from_latest_backup
+      notify: reload nftables
+ 
+    - name: Ensure nftables drop IPv6 loopback spoof
+      ansible.builtin.command: nft add rule inet filter input ip6 saddr ::1 counter drop
+      when:
+        - fw_type == 'nftables'
+        - ipv6_disabled == '0'
+        - not restore_from_latest_backup
+      notify: reload nftables
+ 
+  handlers:
+    - name: reload firewalld
+      ansible.builtin.command: firewall-cmd --reload
+      when: fw_type == 'firewalld'
+ 
+    - name: reload nftables
+      ansible.builtin.command: nft -f /etc/nftables.conf
+      when: fw_type == 'nftables'

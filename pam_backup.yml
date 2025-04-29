@@ -1,0 +1,48 @@
+---
+- name: Remove 'nullok' from PAM configs and backup with timestamp
+  hosts: all
+  become: yes
+  vars:
+    pam_files:
+      - system-auth
+      - password-auth
+    backup_dir: /etc/pam.d/backup
+  tasks:
+
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup original PAM files with timestamp
+      copy:
+        src: "/etc/pam.d/{{ item }}"
+        dest: "{{ backup_dir }}/{{ item }}.bak_{{ ansible_date_time.date }}_{{ ansible_date_time.time | regex_replace(':', '-') }}"
+        remote_src: yes
+      loop: "{{ pam_files }}"
+
+    - name: Remove 'nullok' from pam_unix.so lines
+      replace:
+        path: "/etc/pam.d/{{ item }}"
+        regexp: '(^\s*(auth|password)\s+(requisite|required|sufficient)\s+pam_unix\.so\s+.*)\bnullok\b'
+        replace: '\1'
+        backup: no
+      loop: "{{ pam_files }}"
+
+    - name: Check if 'without-nullok' feature is enabled
+      command: "authselect current"
+      register: authselect_status
+
+    - name: Enable 'without-nullok' feature if not already enabled
+      command: "authselect enable-feature without-nullok"
+      when: "'without-nullok' not in authselect_status.stdout"
+
+    - name: Apply authselect changes
+      command: "authselect apply-changes"
+
+    - name: Reboot if needed (manual review may trigger it)
+      reboot:
+        msg: "Reboot after removing nullok from pam_unix.so"
+        pre_reboot_delay: 5
+      when: false  # change to `true` if you want to trigger automatically

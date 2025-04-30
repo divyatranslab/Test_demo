@@ -1,0 +1,39 @@
+---
+- name: Configure journald to forward logs to rsyslog
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Ensure host is Linux
+      debug:
+        msg: "This host is a Linux system"
+      when: ansible_os_family == "RedHat" or ansible_os_family == "Debian"
+
+    - name: Backup existing journald configuration
+      copy:
+        src: "/etc/systemd/journald.conf"
+        dest: "/etc/systemd/journald.conf.bak_{{ ansible_date_time.iso8601 }}"
+        remote_src: yes
+      when: ansible_os_family == "RedHat" or ansible_os_family == "Debian"
+
+    - name: Ensure journald.conf.d directory exists
+      file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        mode: '0755'
+
+    - name: Create or overwrite ForwardToSyslog config
+      copy:
+        content: |
+          [Journal]
+          ForwardToSyslog=yes
+        dest: /etc/systemd/journald.conf.d/50-journald_forward.conf
+        mode: '0644'
+      notify: Restart journald
+
+    - name: Ensure rsyslog is running
+      service:
+        name: rsyslog
+        state: started
+        enabled: yes

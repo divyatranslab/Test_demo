@@ -1,0 +1,51 @@
+---
+- name: Ensure auditing for processes that start prior to auditd is enabled
+  hosts: all
+  become: yes
+  tasks:
+    - name: Find the GRUB2 configuration file
+      command: "find /boot -name grub.cfg"
+      register: grub_config_file
+      changed_when: false
+
+    - name: Set the correct GRUB config path
+      set_fact:
+        grub_config_path: "{{ grub_config_file.stdout_lines[0] }}"
+      when: grub_config_file.stdout_lines | length > 0
+
+    - name: Backup current GRUB2 configuration
+      copy:
+        src: "{{ grub_config_path }}"
+        dest: "/{{ grub_config_path | basename }}.bak_{{ ansible_date_time.iso8601_basic }}"
+        remote_src: yes
+      when: grub_config_path is defined
+
+    - name: Add audit=1 to GRUB2 kernel args
+      lineinfile:
+        path: /etc/default/grub
+        regexp: '^GRUB_CMDLINE_LINUX="'
+        line: 'GRUB_CMDLINE_LINUX="audit=1"'
+        backup: yes
+      notify:
+        - Rebuild GRUB2 config
+
+    - name: Pause and wait for manual reboot
+      pause:
+        prompt: "The system needs to be rebooted to apply the changes. Please reboot manually and press Enter to continue."
+
+    - name: Verify audit=1 is applied
+      shell: grubby --info=ALL | grep -Po '\baudit=1\b'
+      register: audit_check
+      failed_when: audit_check.stdout == ''
+      changed_when: false
+      ignore_errors: true
+
+    - name: Fail if audit=1 is not present
+      fail:
+        msg: "Audit parameter not found in GRUB2 configuration."
+      when: audit_check.stdout == ''
+
+  handlers:
+    - name: Rebuild GRUB2 config
+      command: grub2-mkconfig -o /boot/grub2/grub.cfg
+      become: yes

@@ -1,0 +1,42 @@
+---
+- name: Ensure IPv6 router advertisements are not accepted (CIS 3.3.11)
+  hosts: all
+  become: yes
+  vars:
+    sysctl_conf_file: "/etc/sysctl.d/60-netipv6_sysctl.conf"
+    timestamp: "{{ lookup('pipe', 'date +%F_%H-%M-%S') }}"
+    backup_path: "{{ sysctl_conf_file }}.bak_{{ timestamp }}"
+    ipv6_settings:
+      - { key: "net.ipv6.conf.all.accept_ra", value: "0" }
+      - { key: "net.ipv6.conf.default.accept_ra", value: "0" }
+
+  tasks:
+
+    - name: Backup existing sysctl IPv6 config file (if it exists)
+      copy:
+        src: "{{ sysctl_conf_file }}"
+        dest: "{{ backup_path }}"
+        remote_src: yes
+      when: ansible_facts['os_family'] == "RedHat" or ansible_facts['os_family'] == "Debian"
+      ignore_errors: true
+
+    - name: Ensure IPv6 accept_ra settings are configured in {{ sysctl_conf_file }}
+      lineinfile:
+        path: "{{ sysctl_conf_file }}"
+        regexp: "^{{ item.key }}\s*="
+        line: "{{ item.key }} = {{ item.value }}"
+        create: yes
+      loop: "{{ ipv6_settings }}"
+      notify: Reload sysctl
+
+    - name: Ensure runtime sysctl values are set (immediate effect)
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        sysctl_set: yes
+      loop: "{{ ipv6_settings }}"
+
+  handlers:
+    - name: Reload sysctl
+      command: sysctl --system

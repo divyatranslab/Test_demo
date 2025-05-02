@@ -15,7 +15,8 @@
         src: "{{ sysctl_conf_file }}"
         dest: "{{ sysctl_conf_file }}.bak_{{ timestamp }}"
         remote_src: yes
-      when: ansible_facts['distribution'] != "Windows" and sysctl_conf_file is file
+      when: ansible_facts['distribution'] != "Windows" and
+            sysctl_conf_file is file
 
     - name: Ensure IPv6 accept_ra settings are configured
       lineinfile:

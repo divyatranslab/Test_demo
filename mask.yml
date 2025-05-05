@@ -4,6 +4,13 @@
   become: yes
   tasks:
 
+    # Create backup directory if it doesn't exist
+    - name: Create backup directory if not exists
+      file:
+        path: /backup
+        state: directory
+        mode: '0755'
+
     # Backup /etc/profile with timestamp
     - name: Backup /etc/profile
       copy:
@@ -36,10 +43,10 @@
 
     # Set umask in /etc/profile if not set correctly
     - name: Set umask in /etc/profile if not set correctly
-      copy:
-        content: "umask 027\n"
-        dest: /etc/profile.d/50-systemwide_umask.sh
-        mode: '0644'
+      lineinfile:
+        path: /etc/profile
+        regexp: '^umask'
+        line: 'umask 027'
       when: (umask_profile.rc | default(0)) != 0
 
     # Check umask setting in /etc/bashrc
@@ -50,10 +57,10 @@
 
     # Set umask in /etc/bashrc if not set correctly
     - name: Set umask in /etc/bashrc if not set correctly
-      copy:
-        content: "umask 027\n"
-        dest: /etc/profile.d/50-systemwide_umask.sh
-        mode: '0644'
+      lineinfile:
+        path: /etc/bashrc
+        regexp: '^umask'
+        line: 'umask 027'
       when: (umask_bashrc.rc | default(0)) != 0
 
     # Check umask setting in /etc/login.defs
@@ -72,8 +79,8 @@
 
     # Ensure /etc/profile.d/50-systemwide_umask.sh exists with correct permissions
     - name: Ensure umask is set in /etc/profile.d
-      file:
-        path: /etc/profile.d/50-systemwide_umask.sh
-        state: touch
+      copy:
+        content: "umask 027\n"
+        dest: /etc/profile.d/50-systemwide_umask.sh
         mode: '0644'
       when: (umask_profile.rc | default(0)) != 0 or (umask_bashrc.rc | default(0)) != 0 or (umask_login_defs.rc | default(0)) != 0

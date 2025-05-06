@@ -1,41 +1,38 @@
 ---
-- name: Ensure 'audit=1' is set in GRUB and create backup
+- name: Ensure audit=1 is set once in GRUB config
   hosts: all
-  become: yes
+  become: true
+  vars:
+    grub_file: /etc/default/grub
+    backup_suffix: "{{ lookup('pipe', 'date +%Y%m%dT%H%M%S') }}"
+    grub_backup_file: "/etc/default/grub.bak.{{ backup_suffix }}"
+
   tasks:
-
-    - name: Get current timestamp
-      command: date +%Y%m%dT%H%M%S
-      register: timestamp
-      changed_when: false
-
-    - name: Always create backup of /etc/default/grub with timestamp
+    - name: Create a timestamped backup of grub file
       copy:
-        src: /etc/default/grub
-        dest: "/etc/default/grub.bak.{{ timestamp.stdout }}"
+        src: "{{ grub_file }}"
+        dest: "{{ grub_backup_file }}"
         remote_src: yes
-        mode: preserve
-      tags: backup
+      register: backup_result
 
-    - name: Read current GRUB_CMDLINE_LINUX value
-      shell: "grep ^GRUB_CMDLINE_LINUX /etc/default/grub | cut -d'=' -f2- | tr -d '\"'"
+    - name: Read current GRUB_CMDLINE_LINUX line
+      command: grep '^GRUB_CMDLINE_LINUX' {{ grub_file }}
       register: grub_cmdline
       changed_when: false
+      check_mode: false
 
-    - name: Set GRUB_CMDLINE_LINUX line with audit=1 if not present
-      lineinfile:
-        path: /etc/default/grub
-        regexp: '^GRUB_CMDLINE_LINUX='
-        line: 'GRUB_CMDLINE_LINUX="{{ grub_cmdline.stdout | regex_replace("\\baudit=1\\b", "") | trim }} audit=1"'
-        backrefs: no
-      register: grub_updated
-
-    - name: Regenerate GRUB config if updated
-      command: grub2-mkconfig -o /boot/grub2/grub.cfg
-      when: grub_updated.changed
-      notify: Grub updated
+    - name: Ensure 'audit=1' is present only once in GRUB_CMDLINE_LINUX
+      replace:
+        path: "{{ grub_file }}"
+        regexp: '^GRUB_CMDLINE_LINUX=.*'
+        replace: "{{ grub_cmdline.stdout | regex_replace('audit=1', '') | regex_replace('\"', ' audit=1\"') }}"
+      notify: Update grub config
+      when: "'audit=1' not in grub_cmdline.stdout or grub_cmdline.stdout | regex_findall('audit=1') | length > 1"
 
   handlers:
-    - name: Grub updated
-      debug:
-        msg: "GRUB configuration updated and grub.cfg regenerated."
+    - name: Update grub config
+      command: grub2-mkconfig -o /boot/grub2/grub.cfg
+
+     
+
+ 

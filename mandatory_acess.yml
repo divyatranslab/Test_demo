@@ -1,0 +1,38 @@
+---
+- name: Ensure SELinux MAC events are collected
+  hosts: all
+  become: yes
+  tasks:
+    - name: Create audit rule for /etc/selinux directory
+      copy:
+        dest: "/etc/audit/rules.d/50-MAC-policy.rules"
+        content: |
+          # Monitor the /etc/selinux directory for write access
+          -w /etc/selinux -p wa -k MAC-policy
+          # Monitor the /usr/share/selinux directory for write access
+          -w /usr/share/selinux -p wa -k MAC-policy
+      notify:
+        - Load audit rules
+
+    - name: Ensure auditd service is running
+      service:
+        name: auditd
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Load audit rules
+      command: augenrules --load
+      register: augenrules_output
+      failed_when: augenrules_output.rc != 0
+      notify:
+        - Verify audit rules
+
+    - name: Verify audit rules
+      command: auditctl -l
+      register: auditctl_output
+      failed_when: "'/etc/selinux' not in auditctl_output.stdout or '/usr/share/selinux' not in auditctl_output.stdout"
+
+    - name: Print auditctl output
+      debug:
+        msg: "{{ auditctl_output.stdout }}"

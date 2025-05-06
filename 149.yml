@@ -1,0 +1,31 @@
+---
+- name: Ensure use of privileged commands is collected (CIS 5.2.3.6)
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Ensure audit rules for privileged commands are in place
+      copy:
+        dest: /etc/audit/rules.d/50-privileged-commands.rules
+        content: |
+          # Monitor setuid and setgid programs
+          -a always,exit -F arch=b64 -S execve -F uid>=1000 -F euid!=0 -F auid!=unset -k privileged-commands
+          -a always,exit -F arch=b32 -S execve -F uid>=1000 -F euid!=0 -F auid!=unset -k privileged-commands
+          
+          # Additional rule to monitor programs with setuid or setgid bit
+          -a always,exit -F arch=b64 -S execve -F path=/usr/bin/sudo -k privileged-commands
+          -a always,exit -F arch=b32 -S execve -F path=/usr/bin/sudo -k privileged-commands
+          
+          # Add other important commands you want to track here (e.g., su, chmod, etc.)
+
+    - name: Load new audit rules
+      command: augenrules --load
+
+    - name: Check if auditd is in immutable mode
+      command: auditctl -s
+      register: audit_status
+
+    - name: Notify if reboot is required due to auditd immutable mode
+      debug:
+        msg: "⚠️ Auditd is in immutable mode. Reboot is required to apply new rules."
+      when: audit_status.stdout is search('enabled[^\\n]*2')

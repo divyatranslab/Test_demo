@@ -2,85 +2,74 @@
 - name: Ensure correct umask settings on production systems
   hosts: all
   become: yes
+  vars:
+    umask_value: "027"
+    backup_dir: "/backup/etc"
+  
   tasks:
-
-    # Create backup directory if it doesn't exist
-    - name: Create backup directory if not exists
+    # Ensure backup directory exists
+    - name: Ensure backup directory exists
       file:
-        path: /backup
+        path: "{{ backup_dir }}"
         state: directory
-        mode: '0755'
-
-    # Backup /etc/profile with timestamp
-    - name: Backup /etc/profile
-      copy:
-        src: /etc/profile
-        dest: "/backup/etc/profile.bak_{{ ansible_date_time.iso8601_basic }}"
-        backup: yes
-      when: (umask_profile.rc | default(0)) != 0
-
-    # Backup /etc/bashrc with timestamp
-    - name: Backup /etc/bashrc
-      copy:
-        src: /etc/bashrc
-        dest: "/backup/etc/bashrc.bak_{{ ansible_date_time.iso8601_basic }}"
-        backup: yes
-      when: (umask_bashrc.rc | default(0)) != 0
-
-    # Backup /etc/login.defs with timestamp
-    - name: Backup /etc/login.defs
-      copy:
-        src: /etc/login.defs
-        dest: "/backup/etc/login.defs.bak_{{ ansible_date_time.iso8601_basic }}"
-        backup: yes
-      when: (umask_login_defs.rc | default(0)) != 0
-
-    # Check umask setting in /etc/profile
+        mode: '0700'
+      
+    # Check current umask settings in all files
     - name: Check umask in /etc/profile
       shell: grep -Psiq 'umask\s+(0?[0-7][2-7][0-7]|u=[rwx]{0,3},g=[rx]{0,2},o=[rwx]{0,3})' /etc/profile
       register: umask_profile
-      ignore_errors: yes
-
-    # Set umask in /etc/profile if not set correctly
-    - name: Set umask in /etc/profile if not set correctly
-      lineinfile:
-        path: /etc/profile
-        regexp: '^umask'
-        line: 'umask 027'
-      when: (umask_profile.rc | default(0)) != 0
-
-    # Check umask setting in /etc/bashrc
+      changed_when: false
+      failed_when: false
+      
     - name: Check umask in /etc/bashrc
       shell: grep -Psiq 'umask\s+(0?[0-7][2-7][0-7]|u=[rwx]{0,3},g=[rx]{0,2},o=[rwx]{0,3})' /etc/bashrc
       register: umask_bashrc
-      ignore_errors: yes
-
-    # Set umask in /etc/bashrc if not set correctly
-    - name: Set umask in /etc/bashrc if not set correctly
-      lineinfile:
-        path: /etc/bashrc
-        regexp: '^umask'
-        line: 'umask 027'
-      when: (umask_bashrc.rc | default(0)) != 0
-
-    # Check umask setting in /etc/login.defs
+      changed_when: false
+      failed_when: false
+      
     - name: Check umask in /etc/login.defs
       shell: grep -Psiq 'UMASK\s+(0?[0-7][2-7][0-7]|u=[rwx]{0,3},g=[rx]{0,2},o=[rwx]{0,3})' /etc/login.defs
       register: umask_login_defs
-      ignore_errors: yes
+      changed_when: false
+      failed_when: false
 
+    # Handle /etc/profile
+    - name: Backup /etc/profile
+      copy:
+        src: /etc/profile
+        dest: "{{ backup_dir }}/profile.bak_{{ ansible_date_time.iso8601_basic }}"
+        mode: '0600'
+      when: umask_profile.rc != 0
+      
+    # Handle /etc/bashrc
+    - name: Backup /etc/bashrc
+      copy:
+        src: /etc/bashrc
+        dest: "{{ backup_dir }}/bashrc.bak_{{ ansible_date_time.iso8601_basic }}"
+        mode: '0600'
+      when: umask_bashrc.rc != 0
+      
+    # Handle /etc/login.defs
+    - name: Backup /etc/login.defs
+      copy:
+        src: /etc/login.defs
+        dest: "{{ backup_dir }}/login.defs.bak_{{ ansible_date_time.iso8601_basic }}"
+        mode: '0600'
+      when: umask_login_defs.rc != 0
+      
+    # Create the systemwide umask file once
+    - name: Set umask in /etc/profile.d/50-systemwide_umask.sh
+      copy:
+        content: "# Set system-wide umask\numask {{ umask_value }}\n"
+        dest: /etc/profile.d/50-systemwide_umask.sh
+        mode: '0644'
+      register: umask_file_created
+      
     # Set umask in /etc/login.defs if not set correctly
-    - name: Set umask in /etc/login.defs if not set correctly
+    - name: Set umask in /etc/login.defs
       lineinfile:
         path: /etc/login.defs
         regexp: '^UMASK'
-        line: 'UMASK 027'
-      when: (umask_login_defs.rc | default(0)) != 0
-
-    # Ensure /etc/profile.d/50-systemwide_umask.sh exists with correct permissions
-    - name: Ensure umask is set in /etc/profile.d
-      copy:
-        content: "umask 027\n"
-        dest: /etc/profile.d/50-systemwide_umask.sh
-        mode: '0644'
-      when: (umask_profile.rc | default(0)) != 0 or (umask_bashrc.rc | default(0)) != 0 or (umask_login_defs.rc | default(0)) != 0
+        line: 'UMASK {{ umask_value }}'
+        backup: no
+      when: umask_login_defs.rc != 0

@@ -1,0 +1,36 @@
+---
+- name: Ensure auditing for successful and unsuccessful setfacl command attempts
+  hosts: all
+  become: yes
+  tasks:
+    - name: Create audit rule for setfacl command execution
+      copy:
+        dest: "/etc/audit/rules.d/50-setfacl-perm.rules"
+        content: |
+          # Monitor successful and unsuccessful uses of the setfacl command
+          -a always,exit -F path=/usr/bin/setfacl -F perm=x -F auid>=1000 -F auid!=unset -k perm_chng
+      notify:
+        - Load audit rules
+
+    - name: Ensure auditd service is running
+      service:
+        name: auditd
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Load audit rules
+      command: augenrules --load
+      register: augenrules_output
+      failed_when: augenrules_output.rc != 0
+      notify:
+        - Verify audit rules
+
+    - name: Verify audit rules
+      command: auditctl -l
+      register: auditctl_output
+      failed_when: "'/usr/bin/setfacl' not in auditctl_output.stdout"
+
+    - name: Print auditctl output
+      debug:
+        msg: "{{ auditctl_output.stdout }}"

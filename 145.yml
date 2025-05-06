@@ -1,0 +1,33 @@
+---
+- name: Ensure audit rules are immutable and synced
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Ensure /etc/audit/rules.d/99-finalize.rules has '-e 2'
+      lineinfile:
+        path: /etc/audit/rules.d/99-finalize.rules
+        line: "-e 2"
+        state: present
+        create: yes
+        mode: '0640'
+        owner: root
+        group: root
+
+    - name: Load audit rules with augenrules (handle harmless 'No change')
+      command: augenrules --load
+      register: augenrules_result
+      failed_when: >
+        (augenrules_result.rc != 0) and
+        ('No change' not in augenrules_result.stdout)
+      changed_when: false
+
+    - name: Check audit status
+      command: auditctl -s
+      register: auditctl_status
+      changed_when: false
+
+    - name: Notify if reboot is required (audit not immutable)
+      debug:
+        msg: "Reboot required to enforce audit immutability (-e 2)"
+      when: auditctl_status.stdout is search("enabled[^0-9]*[01]")

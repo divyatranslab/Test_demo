@@ -8,7 +8,6 @@
     backup_timestamp: "{{ ansible_date_time.iso8601_basic }}"
   
   tasks:
-    # Create backup directory with secure permissions
     - name: Ensure backup directory exists
       file:
         path: "{{ backup_dir }}"
@@ -16,8 +15,7 @@
         mode: '0700'
         owner: root
         group: root
-      
-    # First, check all configuration files for existence
+
     - name: Check if config files exist
       stat:
         path: "{{ item }}"
@@ -28,28 +26,22 @@
         - /etc/bash.bashrc
         - /etc/login.defs
         - /etc/profile.d/50-systemwide_umask.sh
-    
-    # Process each file if it exists
-    - name: Create file stats dictionary
+
+    - name: Create file existence dictionary
       set_fact:
-        file_exists: "{{ dict(file_stats.results | map(attribute='item') | 
-                           zip(file_stats.results | map(attribute='stat.exists'))) }}"
-      
-    # Check umask in each existing file
+        file_exists: "{{ dict(file_stats.results | map(attribute='item') | zip(file_stats.results | map(attribute='stat.exists'))) }}"
+
     - name: Check umask settings in existing files
       shell: "grep -P '^\\s*(U)?[Mm][Aa][Ss][Kk]\\s+' {{ item }}"
       register: umask_checks
       changed_when: false
       failed_when: false
       loop: "{{ file_stats.results | selectattr('stat.exists', 'equalto', true) | map(attribute='item') | list }}"
-      
-    # Create a dictionary of file paths to grep results
+
     - name: Create umask check dictionary
       set_fact:
-        umask_results: "{{ dict(umask_checks.results | map(attribute='item') | 
-                             zip(umask_checks.results | map(attribute='stdout_lines'))) }}"
-      
-    # Backup files only if they exist, have umask settings, and need changes
+        umask_results: "{{ dict(umask_checks.results | map(attribute='item') | zip(umask_checks.results | map(attribute='stdout_lines'))) }}"
+
     - name: Backup configuration files before changes
       copy:
         src: "{{ item }}"
@@ -64,59 +56,41 @@
         umask_results[item] | length > 0 and
         not (umask_results[item] | join('|') is search('umask\\s+(0?[0-7][2-7]7|u=[rwx]{0,3},g=[rx]{0,2},o=)') or 
              umask_results[item] | join('|') is search('UMASK\\s+(0?[0-7][2-7]7)'))
-      
-    # Comment out non-compliant umask settings in each file
+
     - name: Comment out incorrect umask settings in /etc/profile
       replace:
         path: /etc/profile
         regexp: '^(\\s*umask\\s+(?!(0?[0-7][2-7]7|u=[rwx]{0,3},g=[rx]{0,2},o=)).*)$'
         replace: '# \1 # Commented out by Ansible - CIS compliance'
       when: file_exists['/etc/profile'] | bool and 
-            '/etc/profile' in umask_results and 
-            umask_results['/etc/profile'] | length > 0 and
-            not (umask_results['/etc/profile'] | join('|') is search('umask\\s+(0?[0-7][2-7]7|u=[rwx]{0,3},g=[rx]{0,2},o=)'))
-      
+            '/etc/profile' in umask_results
+
     - name: Comment out incorrect umask settings in /etc/bashrc
       replace:
         path: /etc/bashrc
         regexp: '^(\\s*umask\\s+(?!(0?[0-7][2-7]7|u=[rwx]{0,3},g=[rx]{0,2},o=)).*)$'
         replace: '# \1 # Commented out by Ansible - CIS compliance'
       when: file_exists['/etc/bashrc'] | bool and 
-            '/etc/bashrc' in umask_results and 
-            umask_results['/etc/bashrc'] | length > 0 and
-            not (umask_results['/etc/bashrc'] | join('|') is search('umask\\s+(0?[0-7][2-7]7|u=[rwx]{0,3},g=[rx]{0,2},o=)'))
-      
+            '/etc/bashrc' in umask_results
+
     - name: Comment out incorrect umask settings in /etc/bash.bashrc
       replace:
         path: /etc/bash.bashrc
         regexp: '^(\\s*umask\\s+(?!(0?[0-7][2-7]7|u=[rwx]{0,3},g=[rx]{0,2},o=)).*)$'
         replace: '# \1 # Commented out by Ansible - CIS compliance'
       when: file_exists['/etc/bash.bashrc'] | bool and 
-            '/etc/bash.bashrc' in umask_results and 
-            umask_results['/etc/bash.bashrc'] | length > 0 and
-            not (umask_results['/etc/bash.bashrc'] | join('|') is search('umask\\s+(0?[0-7][2-7]7|u=[rwx]{0,3},g=[rx]{0,2},o=)'))
-      
-    - name: Comment out incorrect umask settings in /etc/login.defs
-      replace:
-        path: /etc/login.defs
-        regexp: '^(\\s*UMASK\\s+(?!(0?[0-7][2-7]7)).*)$'
-        replace: '# \1 # Commented out by Ansible - CIS compliance'
-      when: file_exists['/etc/login.defs'] | bool and 
-            '/etc/login.defs' in umask_results and 
-            umask_results['/etc/login.defs'] | length > 0 and
-            not (umask_results['/etc/login.defs'] | join('|') is search('UMASK\\s+(0?[0-7][2-7]7)'))
-    
-    # Add UMASK to login.defs if it doesn't exist but file does
-    - name: Add UMASK to /etc/login.defs if missing
+            '/etc/bash.bashrc' in umask_results
+
+    - name: Replace or add correct UMASK in /etc/login.defs
       lineinfile:
         path: /etc/login.defs
+        regexp: '^UMASK'
         line: 'UMASK {{ umask_value }}'
         state: present
-      when: file_exists['/etc/login.defs'] | bool and 
-            ('/etc/login.defs' not in umask_results or umask_results['/etc/login.defs'] | length == 0 or
-             not (umask_results['/etc/login.defs'] | join('|') is search('UMASK')))
-    
-    # Ensure profile.d directory exists
+        create: yes
+        backup: yes
+      when: file_exists['/etc/login.defs'] | bool
+
     - name: Ensure /etc/profile.d directory exists
       file:
         path: /etc/profile.d
@@ -124,8 +98,7 @@
         mode: '0755'
         owner: root
         group: root
-    
-    # Create the standardized umask file
+
     - name: Create or update standardized umask file
       copy:
         content: |
@@ -137,21 +110,18 @@
         owner: root
         group: root
       register: umask_file_updated
-    
-    # Verify settings are applied correctly
+
     - name: Verify umask settings are correct
-      shell: >
-        grep -P '^umask\s+{{ umask_value }}' /etc/profile.d/50-systemwide_umask.sh
+      shell: grep -P '^umask\s+{{ umask_value }}' /etc/profile.d/50-systemwide_umask.sh
       register: verify_result
       changed_when: false
       failed_when: false
-      
-    # Report on outcome
+
     - name: Report configuration status
       debug:
         msg: |
           CIS umask configuration complete:
-          - System-wide umask file: {{ '/etc/profile.d/50-systemwide_umask.sh' }}
+          - System-wide umask file: /etc/profile.d/50-systemwide_umask.sh
           - Umask value set: {{ umask_value }}
           - Verification result: {{ 'PASS' if verify_result.rc == 0 else 'FAIL' }}
           - Files backed up: {{ backup_dir }}

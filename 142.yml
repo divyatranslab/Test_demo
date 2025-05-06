@@ -1,0 +1,39 @@
+---
+- name: Ensure auditing of kernel module loading/unloading (CIS 5.2.3.19)
+  hosts: all
+  become: yes
+  vars:
+    audit_rule_file: /etc/audit/rules.d/50-kernel_modules.rules
+
+  tasks:
+    - name: Get UID_MIN from /etc/login.defs
+      command: awk '/^\s*UID_MIN/ { print $2 }' /etc/login.defs
+      register: uid_min
+
+    - name: Fail if UID_MIN could not be retrieved
+      fail:
+        msg: "Could not determine UID_MIN. Check /etc/login.defs."
+      when: uid_min.stdout == ""
+
+    - name: Set audit rules for kernel module operations
+      copy:
+        dest: "{{ audit_rule_file }}"
+        content: |
+          -a always,exit -F arch=b64 -S init_module,finit_module,delete_module,create_module,query_module -F auid>={{ uid_min.stdout }} -F auid!=unset -k kernel_modules
+          -a always,exit -F path=/usr/bin/kmod -F perm=x -F auid>={{ uid_min.stdout }} -F auid!=unset -k kernel_modules
+        owner: root
+        group: root
+        mode: '0640'
+
+    - name: Load audit rules
+      command: augenrules --load
+
+    - name: Check if a reboot is required (auditd enabled status = 2)
+      shell: |
+        auditctl -s | grep '^enabled' | awk '{if ($2 == 2) print "yes"; else print "no"}'
+      register: reboot_required
+
+    - name: Notify if reboot is required
+      debug:
+        msg: "Reboot required to load audit rules."
+      when: reboot_required.stdout == "yes"

@@ -15,15 +15,34 @@
           -w /etc/hosts -p wa -k system-locale
           -w /etc/sysconfig/network -p wa -k system-locale
           -w /etc/sysconfig/network-scripts/ -p wa -k system-locale
-
-    - name: Load audit rules
-      command: augenrules --load
+      notify: Load audit rules
 
     - name: Check if auditd is in immutable mode
       command: auditctl -s
       register: audit_status
+      changed_when: false
 
-    - name: Notify if reboot is required due to auditd immutable mode
+    - name: Warn if auditd is in immutable mode
       debug:
         msg: "⚠️ Auditd is in immutable mode. Reboot is required to apply new rules."
       when: audit_status.stdout is search('enabled[^\\n]*2')
+
+    - name: Pause to allow audit rules to apply
+      pause:
+        seconds: 5
+
+    - name: Check loaded audit rules
+      command: auditctl -l
+      register: loaded_audit_rules
+      changed_when: false
+
+    - name: Fail if /etc/hosts audit rule is missing
+      fail:
+        msg: "Audit rule for /etc/hosts is missing!"
+      when: "'-w /etc/hosts -p wa -k system-locale' not in loaded_audit_rules.stdout"
+
+  handlers:
+    - name: Load audit rules
+      command: augenrules --load
+
+   

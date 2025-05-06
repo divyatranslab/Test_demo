@@ -1,34 +1,43 @@
 ---
-- name: Ensure 'audit=1' is enabled in GRUB
+- name: Ensure audit=1 is set in GRUB config (CIS 5.2.1.2)
   hosts: all
-  become: yes
+  become: true
+  vars:
+    grub_config_file: /etc/default/grub
+    grub_backup_dir: /etc/default
+    timestamp: "{{ lookup('pipe', 'date +%Y%m%dT%H%M%S') }}"
+    grub_backup_file: "{{ grub_backup_dir }}/grub.bak.{{ timestamp }}"
+
   tasks:
 
-    - name: Set timestamp fact
-      set_fact:
-        ts: "{{ lookup('pipe', 'date +%Y%m%dT%H%M%S') }}"
+    - name: Check if audit=1 is already present in GRUB config
+      command: grep -q '\baudit=1\b' {{ grub_config_file }}
+      register: audit_check
+      ignore_errors: true
+      changed_when: false
 
-    - name: Backup /boot/grub2/grub.cfg
+    - name: Backup GRUB config if audit=1 is not present
       copy:
-        src: /boot/grub2/grub.cfg
-        dest: "/boot/grub2/grub.cfg.backup.{{ ts }}"
-        remote_src: yes
-      when: ansible_facts['distribution'] == 'RedHat' or ansible_facts['distribution'] == 'CentOS'
+        src: "{{ grub_config_file }}"
+        dest: "{{ grub_backup_file }}"
+        remote_src: true
+      when: audit_check.rc != 0
+      register: grub_backup
 
-    - name: Backup /boot/efi/EFI/redhat/grub.cfg (EFI systems)
-      copy:
-        src: /boot/efi/EFI/redhat/grub.cfg
-        dest: "/boot/efi/EFI/redhat/grub.cfg.backup.{{ ts }}"
-        remote_src: yes
-      when: ansible_facts['distribution'] == 'RedHat' or ansible_facts['distribution'] == 'CentOS'
+    - name: Append audit=1 to GRUB_CMDLINE_LINUX if not present
+      lineinfile:
+        path: "{{ grub_config_file }}"
+        regexp: '^GRUB_CMDLINE_LINUX="(.*)"'
+        line: 'GRUB_CMDLINE_LINUX="\1 audit=1"'
+        backrefs: yes
+      when: audit_check.rc != 0
 
-    - name: Add 'audit=1' kernel argument using grubby
-      command: grubby --update-kernel=ALL --args="audit=1"
-
-    - name: Regenerate GRUB config (BIOS-based)
+    - name: Update grub2 configuration
       command: grub2-mkconfig -o /boot/grub2/grub.cfg
-      when: ansible_facts['distribution'] == 'RedHat' or ansible_facts['distribution'] == 'CentOS'
+      when: audit_check.rc != 0
+      notify: "Show GRUB config update message"
 
-    - name: Regenerate GRUB config (EFI-based)
-      command: grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg
-      when: ansible_facts['distribution'] == 'RedHat' or ansible_facts['distribution'] == 'CentOS'
+  handlers:
+    - name: Show GRUB config update message
+      debug:
+        msg: "GRUB configuration updated with audit=1. Please reboot for changes to take effect."

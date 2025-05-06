@@ -1,43 +1,41 @@
 ---
-- name: Ensure audit=1 is set in GRUB config (CIS 5.2.1.2)
+- name: Ensure 'audit=1' is set in GRUB and create backup
   hosts: all
-  become: true
-  vars:
-    grub_config_file: /etc/default/grub
-    grub_backup_dir: /etc/default
-    timestamp: "{{ lookup('pipe', 'date +%Y%m%dT%H%M%S') }}"
-    grub_backup_file: "{{ grub_backup_dir }}/grub.bak.{{ timestamp }}"
-
+  become: yes
   tasks:
 
-    - name: Check if audit=1 is already present in GRUB config
-      command: grep -q '\baudit=1\b' {{ grub_config_file }}
-      register: audit_check
-      ignore_errors: true
+    - name: Get current timestamp
+      command: date +%Y%m%dT%H%M%S
+      register: timestamp
       changed_when: false
 
-    - name: Backup GRUB config if audit=1 is not present
+    - name: Always create backup of /etc/default/grub with timestamp
       copy:
-        src: "{{ grub_config_file }}"
-        dest: "{{ grub_backup_file }}"
-        remote_src: true
-      when: audit_check.rc != 0
-      register: grub_backup
+        src: /etc/default/grub
+        dest: "/etc/default/grub.bak.{{ timestamp.stdout }}"
+        remote_src: yes
+        mode: preserve
+      tags: backup
 
-    - name: Append audit=1 to GRUB_CMDLINE_LINUX if not present
+    - name: Read current GRUB_CMDLINE_LINUX value
+      shell: "grep ^GRUB_CMDLINE_LINUX /etc/default/grub | cut -d'=' -f2- | tr -d '\"'"
+      register: grub_cmdline
+      changed_when: false
+
+    - name: Set GRUB_CMDLINE_LINUX line with audit=1 if not present
       lineinfile:
-        path: "{{ grub_config_file }}"
-        regexp: '^GRUB_CMDLINE_LINUX="(.*)"'
-        line: 'GRUB_CMDLINE_LINUX="\1 audit=1"'
-        backrefs: yes
-      when: audit_check.rc != 0
+        path: /etc/default/grub
+        regexp: '^GRUB_CMDLINE_LINUX='
+        line: 'GRUB_CMDLINE_LINUX="{{ grub_cmdline.stdout | regex_replace("\\baudit=1\\b", "") | trim }} audit=1"'
+        backrefs: no
+      register: grub_updated
 
-    - name: Update grub2 configuration
+    - name: Regenerate GRUB config if updated
       command: grub2-mkconfig -o /boot/grub2/grub.cfg
-      when: audit_check.rc != 0
-      notify: "Show GRUB config update message"
+      when: grub_updated.changed
+      notify: Grub updated
 
   handlers:
-    - name: Show GRUB config update message
+    - name: Grub updated
       debug:
-        msg: "GRUB configuration updated with audit=1. Please reboot for changes to take effect."
+        msg: "GRUB configuration updated and grub.cfg regenerated."

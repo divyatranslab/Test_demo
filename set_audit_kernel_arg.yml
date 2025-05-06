@@ -1,0 +1,34 @@
+---
+- name: Ensure 'audit=1' is enabled in GRUB
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Set timestamp fact
+      set_fact:
+        ts: "{{ lookup('pipe', 'date +%Y%m%dT%H%M%S') }}"
+
+    - name: Backup /boot/grub2/grub.cfg
+      copy:
+        src: /boot/grub2/grub.cfg
+        dest: "/boot/grub2/grub.cfg.backup.{{ ts }}"
+        remote_src: yes
+      when: ansible_facts['distribution'] == 'RedHat' or ansible_facts['distribution'] == 'CentOS'
+
+    - name: Backup /boot/efi/EFI/redhat/grub.cfg (EFI systems)
+      copy:
+        src: /boot/efi/EFI/redhat/grub.cfg
+        dest: "/boot/efi/EFI/redhat/grub.cfg.backup.{{ ts }}"
+        remote_src: yes
+      when: ansible_facts['distribution'] == 'RedHat' or ansible_facts['distribution'] == 'CentOS'
+
+    - name: Add 'audit=1' kernel argument using grubby
+      command: grubby --update-kernel=ALL --args="audit=1"
+
+    - name: Regenerate GRUB config (BIOS-based)
+      command: grub2-mkconfig -o /boot/grub2/grub.cfg
+      when: ansible_facts['distribution'] == 'RedHat' or ansible_facts['distribution'] == 'CentOS'
+
+    - name: Regenerate GRUB config (EFI-based)
+      command: grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg
+      when: ansible_facts['distribution'] == 'RedHat' or ansible_facts['distribution'] == 'CentOS'

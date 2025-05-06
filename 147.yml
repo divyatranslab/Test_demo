@@ -1,0 +1,52 @@
+---
+- name: Ensure time-change audit rules are applied
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Ensure time-change audit rules file exists
+      copy:
+        dest: /etc/audit/rules.d/50-time-change.rules
+        content: |
+          -a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k time-change
+          -a always,exit -F arch=b32 -S adjtimex,settimeofday,clock_settime -k time-change
+          -w /etc/localtime -p wa -k time-change
+        mode: '0644'
+        owner: root
+        group: root
+
+    - name: Reload audit rules using augenrules
+      command: augenrules --load
+      ignore_errors: false
+
+    - name: Pause to allow audit rules to apply
+      pause:
+        seconds: 2
+
+    - name: Get current audit rules
+      command: auditctl -l
+      register: auditctl_output
+
+    - name: Show current audit rules (for debugging)
+      debug:
+        var: auditctl_output.stdout_lines
+
+    - name: Fail if adjtimex rule is missing
+      fail:
+        msg: "Missing audit rule for adjtimex (b64)"
+      when: auditctl_output.stdout is not search("adjtimex.*time-change")
+
+    - name: Fail if settimeofday rule is missing
+      fail:
+        msg: "Missing audit rule for settimeofday (b64)"
+      when: auditctl_output.stdout is not search("settimeofday.*time-change")
+
+    - name: Fail if clock_settime rule is missing
+      fail:
+        msg: "Missing audit rule for clock_settime (b64)"
+      when: auditctl_output.stdout is not search("clock_settime.*time-change")
+
+    - name: Fail if /etc/localtime watch rule is missing
+      fail:
+        msg: "Missing audit rule for /etc/localtime"
+      when: auditctl_output.stdout is not search("-w /etc/localtime -p wa -k time-change")

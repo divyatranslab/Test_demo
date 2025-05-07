@@ -37,3 +37,5 @@
     - name: Notify manual reboot
       debug:
         msg: "Configuration updated. Please reboot the system manually to apply changes."
+
+    

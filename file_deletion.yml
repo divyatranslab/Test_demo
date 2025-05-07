@@ -1,0 +1,72 @@
+---
+- name: Ensure file deletion events are collected
+  hosts: all
+  become: yes
+  tasks:
+    - name: Get UID_MIN value
+      command: awk '/^UID_MIN/{print $2}' /etc/login.defs
+      register: uid_min
+      failed_when: uid_min.stdout == ""
+      changed_when: false
+ 
+    - name: Backup /etc/audit/audit.rules if it exists
+      copy:
+        src: /etc/audit/audit.rules
+        dest: /etc/audit/audit.rules.bak
+        remote_src: yes
+      when: ansible_facts['distribution_file_variety'] == "RedHat" and ansible_facts['os_family'] == "RedHat"
+ 
+    - name: Remove conflicting delete rules from /etc/audit/audit.rules
+      lineinfile:
+        path: /etc/audit/audit.rules
+        state: absent
+        regexp: '.*-S (rename|unlink|unlinkat|renameat).*key=delete.*'
+      when: ansible_facts['distribution_file_variety'] == "RedHat" and ansible_facts['os_family'] == "RedHat"
+ 
+    - name: Remove existing file deletion rules from rules.d
+      shell: |
+        grep -l 'key=delete' /etc/audit/rules.d/*.rules | xargs -r rm -f
+      changed_when: false
+ 
+    - name: Backup existing 50-delete.rules file if present
+      copy:
+        src: "/etc/audit/rules.d/50-delete.rules"
+        dest: "/etc/audit/rules.d/50-delete.rules.bak"
+        remote_src: yes
+      when: ansible_facts['distribution_file_variety'] == "RedHat" and ansible_facts['os_family'] == "RedHat"
+      ignore_errors: yes
+ 
+    - name: Create audit rule to monitor file deletion events (64-bit)
+      lineinfile:
+        dest: "/etc/audit/rules.d/50-delete.rules"
+        line: "-a always,exit -F arch=b64 -S rename,unlink,unlinkat,renameat -F auid>={{ uid_min.stdout }} -F auid!=unset -F key=delete"
+        create: yes
+        insertafter: EOF
+ 
+    - name: Create audit rule to monitor file deletion events (32-bit)
+      lineinfile:
+        dest: "/etc/audit/rules.d/50-delete.rules"
+        line: "-a always,exit -F arch=b32 -S rename,unlink,unlinkat,renameat -F auid>={{ uid_min.stdout }} -F auid!=unset -F key=delete"
+        insertafter: EOF
+ 
+    - name: Reload audit rules
+      command: augenrules --load
+      register: augenrules_output
+      failed_when: "'There was an error' in augenrules_output.stderr and 'Rule exists' not in augenrules_output.stderr"
+      notify:
+        - Check audit rules
+ 
+    - name: Ensure audit service is running
+      service:
+        name: auditd
+        state: started
+        enabled: yes
+ 
+  handlers:
+    - name: Check audit rules
+      command: auditctl -l
+      register: auditctl_output
+ 
+    - name: Print the audit rules output
+      debug:
+        msg: "{{ auditctl_output.stdout }}"

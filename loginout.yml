@@ -1,0 +1,53 @@
+---
+- name: Configure and load login/logout audit rules
+  hosts: all
+  become: true
+  gather_facts: true
+ 
+  tasks:
+ 
+    - name: Ensure /etc/audit/rules.d directory exists
+      file:
+        path: /etc/audit/rules.d
+        state: directory
+        mode: '0755'
+ 
+    - name: Backup existing 50-login.rules if it exists
+      copy:
+        src: /etc/audit/rules.d/50-login.rules
+        dest: "/etc/audit/rules.d/50-login.rules.backup-{{ ansible_date_time.iso8601 | regex_replace('[:]', '') }}"
+        remote_src: true
+      ignore_errors: true
+ 
+    - name: Create or update 50-login.rules file using blockinfile
+      blockinfile:
+        path: /etc/audit/rules.d/50-login.rules
+        create: yes
+        mode: '0644'
+        block: |
+          -w /var/log/lastlog -p wa -k logins
+          -w /var/run/faillock -p wa -k logins
+ 
+    - name: Load audit rules with augenrules (ignore duplicate rule errors)
+      command: augenrules --load
+      register: augenrules_result
+      failed_when: >
+        augenrules_result.rc != 0 and
+        'Rule exists' not in augenrules_result.stderr
+ 
+    - name: Check if auditd is in immutable mode
+      command: auditctl -s
+      register: auditctl_status
+      changed_when: false
+      failed_when: false
+ 
+    - name: Warn if auditd is in immutable mode
+      debug:
+        msg: "⚠️ Auditd is in immutable mode. Reboot is required to apply new rules."
+      when: "'enabled = 2' in auditctl_status.stdout"
+ 
+    - name: Ensure auditd service is running
+      service:
+        name: auditd
+        state: started
+        enabled: true

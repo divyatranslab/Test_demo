@@ -1,0 +1,60 @@
+---
+- name: Ensure auditing of kernel module loading/unloading (CIS 5.2.3.19)
+  hosts: all
+  become: yes
+  vars:
+    audit_rule_file: /etc/audit/rules.d/50-kernel_modules.rules
+ 
+  tasks:
+    - name: Get UID_MIN from /etc/login.defs
+      command: awk '/^\s*UID_MIN/ { print $2 }' /etc/login.defs
+      register: uid_min
+ 
+    - name: Fail if UID_MIN could not be retrieved
+      fail:
+        msg: "Could not determine UID_MIN. Check /etc/login.defs."
+      when: uid_min.stdout == ""
+ 
+    - name: Backup existing /etc/audit/audit.rules
+      copy:
+        src: /etc/audit/audit.rules
+        dest: /etc/audit/audit.rules.bak
+        remote_src: yes
+      ignore_errors: yes
+ 
+    - name: Remove existing kernel module audit rules from audit.rules
+      lineinfile:
+        path: /etc/audit/audit.rules
+        state: absent
+        regexp: '.*(init_module|finit_module|delete_module|create_module|query_module|/usr/bin/kmod).*'
+      ignore_errors: yes
+ 
+    - name: Remove old kernel module rule file (if exists)
+      file:
+        path: "{{ audit_rule_file }}"
+        state: absent
+      ignore_errors: yes
+ 
+    - name: Create kernel module audit rule file
+      copy:
+        dest: "{{ audit_rule_file }}"
+        content: |
+          -a always,exit -F arch=b64 -S init_module,finit_module,delete_module,create_module,query_module -F auid>={{ uid_min.stdout }} -F auid!=unset -k kernel_modules
+          -a always,exit -F path=/usr/bin/kmod -F perm=x -F auid>={{ uid_min.stdout }} -F auid!=unset -k kernel_modules
+        owner: root
+        group: root
+        mode: '0640'
+ 
+    - name: Load audit rules
+      command: augenrules --load
+      register: augenrules_result
+      failed_when: "'There was an error' in augenrules_result.stderr and 'Rule exists' not in augenrules_result.stderr"
+ 
+    - name: Check if auditd is in immutable mode
+      shell: auditctl -s | grep '^enabled' | awk '{ print $2 }'
+      register: auditd_status
+ 
+    - name: Notify if reboot is required
+      debug:
+        msg: "⚠️ Auditd is in immutable mode. Reboot is required to apply rules."
+      when: auditd_status.stdout == "2"

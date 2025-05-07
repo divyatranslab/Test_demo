@@ -11,7 +11,7 @@
         mode: '0755'
 
     - name: Get list of unconfined services (if any)
-      command: ps -eZ | grep unconfined_service_t | awk -F: '{ print $NF }'
+      shell: "ps -eZ | grep unconfined_service_t | awk -F':' '{ print $NF }'"
       register: unconfined_services
       failed_when: false
       changed_when: false
@@ -34,3 +34,5 @@
           No unconfined services found.
           {% endif %}
         mode: '0644'
+
+     

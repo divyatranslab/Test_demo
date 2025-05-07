@@ -1,0 +1,57 @@
+---
+- name: Ensure audit rules for privileged commands (CIS 5.2.3.6)
+  hosts: all
+  become: true
+
+  tasks:
+
+    - name: Backup existing privileged commands rules if present
+      copy:
+        src: /etc/audit/rules.d/50-privileged-commands.rules
+        dest: /etc/audit/rules.d/50-privileged-commands.rules.bak
+        remote_src: true
+      ignore_errors: true
+
+    - name: Backup existing audit.rules if present
+      copy:
+        src: /etc/audit/audit.rules
+        dest: /etc/audit/audit.rules.bak
+        remote_src: true
+      ignore_errors: true
+
+    - name: Ensure audit rules for privileged commands are in place
+      copy:
+        dest: /etc/audit/rules.d/50-privileged-commands.rules
+        owner: root
+        group: root
+        mode: '0640'
+        content: |
+          # Monitor setuid and setgid programs
+          -a always,exit -F arch=b64 -S execve -F uid>=1000 -F euid!=0 -F auid!=unset -k privileged-commands
+          -a always,exit -F arch=b32 -S execve -F uid>=1000 -F euid!=0 -F auid!=unset -k privileged-commands
+
+          # Monitor specific privileged binaries (e.g., sudo)
+          -a always,exit -F arch=b64 -S execve -F path=/usr/bin/sudo -k privileged-commands
+          -a always,exit -F arch=b32 -S execve -F path=/usr/bin/sudo -k privileged-commands
+
+    - name: Remove compiled audit.rules to avoid conflicts (optional but recommended)
+      file:
+        path: /etc/audit/audit.rules
+        state: absent
+
+    - name: Reload audit rules with augenrules
+      command: augenrules --load
+      register: augenrules_result
+      failed_when: >
+        augenrules_result.rc != 0 and
+        ('Rule exists' not in augenrules_result.stderr and
+         'There was an error in line' not in augenrules_result.stderr)
+
+    - name: Check if auditd is in immutable mode
+      command: auditctl -s
+      register: audit_status
+
+    - name: Notify if reboot is required due to auditd immutable mode
+      debug:
+        msg: "⚠️ Auditd is in immutable mode. Reboot is required to apply new rules."
+      when: audit_status.stdout is search('enabled[^\\n]*2')

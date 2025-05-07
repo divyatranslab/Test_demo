@@ -1,39 +1,36 @@
 ---
-- name: Backup unconfined SELinux services
-  hosts: all
+- name: Check for unconfined services and always create a backup
+  hosts: localhost
   become: true
-  vars:
-    backup_dir: "/var/backups/selinux_unconfined"
-    timestamp: "{{ lookup('pipe', 'date +%Y%m%d%H%M%S') }}"
-    backup_file: "{{ backup_dir }}/unconfined_services_{{ timestamp }}.txt"
-
   tasks:
+
     - name: Ensure backup directory exists
       file:
-        path: "{{ backup_dir }}"
+        path: /var/backups/selinux_unconfined
         state: directory
         mode: '0755'
 
-    - name: Check for unconfined services
-      shell: "/bin/ps -eZ | /bin/grep unconfined_service_t | /bin/awk -F: '{ print $NF }'"
+    - name: Get list of unconfined services (if any)
+      command: ps -eZ | grep unconfined_service_t | awk -F: '{ print $NF }'
       register: unconfined_services
+      failed_when: false
       changed_when: false
 
-    - name: Set fact if unconfined services exist
-      set_fact:
-        unconfined_list: "{{ unconfined_services.stdout_lines | unique }}"
-      when: unconfined_services.stdout != ""
+    - name: Generate timestamp
+      command: date +%Y%m%d%H%M%S
+      register: timestamp
+      changed_when: false
 
-    - name: Create timestamped backup file only if unconfined services exist
+    - name: Create timestamped backup file (even if no unconfined services)
       copy:
+        dest: "/var/backups/selinux_unconfined/unconfined_services_{{ timestamp.stdout }}.txt"
         content: |
-          {{ ansible_date_time.iso8601 }}
-          {{ unconfined_list | join('\n') }}
-        dest: "{{ backup_file }}"
+          Timestamp: {{ lookup('pipe', 'date --iso-8601=seconds') }}
+          {% if unconfined_services.stdout_lines %}
+          {% for svc in unconfined_services.stdout_lines | unique | sort %}
+          {{ svc }}
+          {% endfor %}
+          {% else %}
+          No unconfined services found.
+          {% endif %}
         mode: '0644'
-      when: unconfined_services.stdout != ""
-
-    - name: Display backup file location
-      debug:
-        msg: "Backup saved to {{ backup_file }}"
-      when: unconfined_services.stdout != ""

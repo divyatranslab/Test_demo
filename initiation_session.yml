@@ -1,0 +1,58 @@
+---
+- name: Configure and load session initiation audit rules
+  hosts: all
+  become: true
+  gather_facts: true  # Needed for timestamp
+ 
+  tasks:
+ 
+    - name: Ensure /etc/audit/rules.d directory exists
+      file:
+        path: /etc/audit/rules.d
+        state: directory
+        mode: '0755'
+ 
+    - name: Backup existing session audit rules file if it exists
+      copy:
+        src: /etc/audit/rules.d/50-session.rules
+        dest: "/etc/audit/rules.d/50-session.rules.backup-{{ ansible_date_time.iso8601 | regex_replace('[:]', '') }}"
+        remote_src: true
+      when: ansible_facts['ansible_facts']['distribution'] is defined and
+            ansible_facts['ansible_facts']['distribution'] != "" and
+            ansible_facts['ansible_facts']['date_time'] is defined and
+            ansible_facts['ansible_facts']['date_time']['iso8601'] is defined
+      ignore_errors: true  # In case file doesn't exist
+ 
+    - name: Create or update session audit rules
+      blockinfile:
+        path: /etc/audit/rules.d/50-session.rules
+        create: yes
+        mode: '0644'
+        block: |
+          -w /var/run/utmp -p wa -k session
+          -w /var/log/wtmp -p wa -k session
+          -w /var/log/btmp -p wa -k session
+ 
+    - name: Load the new audit rules with augenrules (ignore duplicate rule errors)
+      command: augenrules --load
+      register: augenrules_result
+      failed_when: >
+        augenrules_result.rc != 0 and
+        'Rule exists' not in augenrules_result.stderr
+ 
+    - name: Check if auditd is in immutable mode
+      command: auditctl -s
+      register: auditctl_status
+      changed_when: false
+      failed_when: false
+ 
+    - name: Warn if auditd is in immutable mode
+      debug:
+        msg: "⚠️ Auditd is in immutable mode. Reboot is required to apply new rules."
+      when: "'enabled = 2' in auditctl_status.stdout"
+ 
+    - name: Ensure auditd service is running and enabled
+      service:
+        name: auditd
+        state: started
+        enabled: true

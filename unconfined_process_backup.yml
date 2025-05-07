@@ -1,45 +1,180 @@
 ---
-- name: Check for unconfined services and create a backup file
-  hosts: localhost
-  become: true
+- name: Fix Unconfined Services for SELinux (Idempotent)
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  vars:
+    backup_dir: "/var/backup/selinux"
+    timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+    full_backup_dir: "{{ backup_dir }}/backup_{{ timestamp }}"
+
   tasks:
 
-    - name: Ensure backup directory exists
+    - name: Ensure SELinux is enabled
+      command: getenforce
+      register: selinux_status
+      changed_when: false
+
+    - name: Fail if SELinux is not enabled
+      fail:
+        msg: "SELinux is not enabled. This playbook requires SELinux to be in enforcing or permissive mode."
+      when: selinux_status.stdout not in ["Enforcing", "Permissive"]
+
+    - name: Ensure SELinux utilities are installed
+      package:
+        name:
+          - policycoreutils-python-utils
+          - policycoreutils
+          - checkpolicy
+        state: present
+
+    - name: Ensure backup directories exist
       file:
-        path: /var/backups/selinux_unconfined
+        path: "{{ item }}"
         state: directory
-        mode: '0755'
+        mode: '0750'
+        owner: root
+        group: root
+      loop:
+        - "{{ backup_dir }}"
+        - "{{ full_backup_dir }}"
 
-    - name: Get list of unconfined services (if any)
-      shell: "ps -eZ | grep unconfined_service_t | awk -F':' '{ print $NF }'"
+    - name: Save detected unconfined services list
+      shell: ps -eZ | grep unconfined_service_t || echo "No unconfined services found"
       register: unconfined_services
-      failed_when: false
       changed_when: false
 
-    - name: Generate timestamp
-      command: date +%Y%m%d%H%M%S
-      register: timestamp
+    - name: Backup SELinux configurations and state (idempotent)
+      block:
+        - name: Backup SELinux config file
+          copy:
+            src: /etc/selinux/config
+            dest: "{{ full_backup_dir }}/selinux_config"
+            remote_src: yes
+            mode: '0640'
+
+        - name: Archive SELinux policy store if it exists
+          when: ansible_facts['distribution'] != 'Ubuntu'
+          archive:
+            path: /etc/selinux/targeted/policy
+            dest: "{{ full_backup_dir }}/selinux_policy_store.tar.gz"
+            format: gz
+
+        - name: Save SELinux module list
+          command: semodule -l
+          register: modules
+          changed_when: false
+
+        - name: Write SELinux module list to file
+          copy:
+            content: "{{ modules.stdout }}"
+            dest: "{{ full_backup_dir }}/selinux_modules"
+            mode: '0640'
+
+        - name: Backup SELinux file contexts, booleans, ports, users
+          command: "{{ item.cmd }}"
+          register: selinux_output
+          changed_when: false
+          loop:
+            - { cmd: 'semanage fcontext -l', file: 'selinux_file_contexts' }
+            - { cmd: 'getsebool -a', file: 'selinux_booleans' }
+            - { cmd: 'semanage user -l', file: 'selinux_user_mappings' }
+            - { cmd: 'semanage port -l', file: 'selinux_port_assignments' }
+
+        - name: Save output of SELinux commands
+          copy:
+            content: "{{ item.0.stdout }}"
+            dest: "{{ full_backup_dir }}/{{ item.1.file }}"
+            mode: '0640'
+          loop: "{{ selinux_output.results | zip(['selinux_file_contexts','selinux_booleans','selinux_user_mappings','selinux_port_assignments']) | list }}"
+
+        - name: Save context of running processes
+          command: ps -eZ
+          register: proc_context
+          changed_when: false
+
+        - name: Write context of processes to file
+          copy:
+            content: "{{ proc_context.stdout }}"
+            dest: "{{ full_backup_dir }}/process_contexts"
+            mode: '0640'
+
+        - name: Save unconfined service output to file
+          copy:
+            content: |
+              # Unconfined Services:
+              {{ unconfined_services.stdout }}
+            dest: "{{ full_backup_dir }}/unconfined_services_list"
+            mode: '0640'
+
+    - name: Create SELinux policy modules (template only, no shell)
+      template:
+        src: templates/selinux_module.te.j2
+        dest: "/tmp/{{ item.name }}.te"
+        mode: '0640'
+      loop:
+        - { name: falcond }
+        - { name: falcon-sensor }
+        - { name: agent }
+        - { name: updater }
+
+    - name: Ensure binary file contexts and apply SELinux types
+      sefcontext:
+        target: "/usr/sbin/{{ item.name }}"
+        setype: "{{ item.name | regex_replace('-', '_') }}_exec_t"
+        state: present
+      loop:
+        - { name: falcond }
+        - { name: falcon-sensor }
+        - { name: agent }
+        - { name: updater }
+      ignore_errors: yes
+
+    - name: Restore SELinux context on binaries
+      command: restorecon -v "/usr/sbin/{{ item.name }}"
+      changed_when: false
+      loop:
+        - { name: falcond }
+        - { name: falcon-sensor }
+        - { name: agent }
+        - { name: updater }
+      ignore_errors: yes
+
+    - name: Restart services if active
+      systemd:
+        name: "{{ item.name }}"
+        state: restarted
+      loop:
+        - { name: falcond }
+        - { name: falcon-sensor }
+        - { name: agent }
+        - { name: updater }
+      when: item.name is defined
+      ignore_errors: yes
+
+    - name: Final verification for unconfined services
+      shell: ps -eZ | grep unconfined_service_t || echo "No unconfined services found"
+      register: final_verification
       changed_when: false
 
-    - name: Check if backup file already exists for today's timestamp
-      stat:
-        path: "/var/backups/selinux_unconfined/unconfined_services_{{ timestamp.stdout }}.txt"
-      register: backup_file
-
-    - name: Create timestamped backup file (only if it does not exist)
+    - name: Write final verification report
       copy:
-        dest: "/var/backups/selinux_unconfined/unconfined_services_{{ timestamp.stdout }}.txt"
         content: |
-          Timestamp: {{ lookup('pipe', 'date --iso-8601=seconds') }}
-          {% if unconfined_services.stdout_lines %}
-          {% for svc in unconfined_services.stdout_lines | unique | sort %}
-          {{ svc }}
-          {% endfor %}
-          {% else %}
-          No unconfined services found.
-          {% endif %}
-        mode: '0644'
-      when: backup_file.stat.exists == false
+          # Verification Report
+          {{ final_verification.stdout }}
+        dest: "{{ full_backup_dir }}/verification_report"
+        mode: '0640'
 
+    - name: Archive final report
+      archive:
+        path: "{{ full_backup_dir }}"
+        dest: "{{ backup_dir }}/selinux_final_{{ timestamp }}.tar.gz"
+        format: gz
+      register: report_archive
 
-     
+    - name: Display summary
+      debug:
+        msg:
+          - "Final verification complete."
+          - "Archive stored: {{ report_archive.dest }}"

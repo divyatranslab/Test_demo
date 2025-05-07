@@ -1,5 +1,5 @@
 ---
-- name: Check for unconfined services and always create a backup
+- name: Check for unconfined services and create a backup file
   hosts: localhost
   become: true
   tasks:
@@ -21,7 +21,12 @@
       register: timestamp
       changed_when: false
 
-    - name: Create timestamped backup file (even if no unconfined services)
+    - name: Check if backup file already exists for today's timestamp
+      stat:
+        path: "/var/backups/selinux_unconfined/unconfined_services_{{ timestamp.stdout }}.txt"
+      register: backup_file
+
+    - name: Create timestamped backup file (only if it does not exist)
       copy:
         dest: "/var/backups/selinux_unconfined/unconfined_services_{{ timestamp.stdout }}.txt"
         content: |
@@ -34,5 +39,7 @@
           No unconfined services found.
           {% endif %}
         mode: '0644'
+      when: backup_file.stat.exists == false
+
 
      

@@ -1,0 +1,51 @@
+---
+- name: Ensure unsuccessful file access attempts are collected (CIS 5.2.3.7)
+  hosts: all
+  become: true
+ 
+  tasks:
+    - name: Backup existing audit rules if present
+      copy:
+        src: /etc/audit/rules.d/50-unsuccessful-file-access.rules
+        dest: /etc/audit/rules.d/50-unsuccessful-file-access.rules.bak
+        remote_src: true
+      ignore_errors: true
+ 
+    - name: Backup current /etc/audit/audit.rules file
+      copy:
+        src: /etc/audit/audit.rules
+        dest: /etc/audit/audit.rules.bak
+        remote_src: true
+      ignore_errors: true
+ 
+    - name: Remove compiled /etc/audit/audit.rules file to avoid conflicts
+      file:
+        path: /etc/audit/audit.rules
+        state: absent
+ 
+    - name: Ensure audit rules for unsuccessful file access attempts are in place
+      copy:
+        dest: /etc/audit/rules.d/50-unsuccessful-file-access.rules
+        content: |
+          # Monitor unsuccessful file access attempts for specific system calls
+          -a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=unset -k access-failed
+          -a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=unset -k access-failed
+          -a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=unset -k access-failed
+          -a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=unset -k access-failed
+ 
+    - name: Reload audit rules using augenrules
+      command: augenrules --load
+      register: augenrules_result
+      failed_when: >
+        augenrules_result.rc != 0 and
+        ('Rule exists' not in augenrules_result.stderr and
+         'There was an error in line' not in augenrules_result.stderr)
+ 
+    - name: Check if auditd is in immutable mode
+      command: auditctl -s
+      register: audit_status
+ 
+    - name: Notify if reboot is required due to auditd immutable mode
+      debug:
+        msg: "⚠️ Auditd is in immutable mode. Reboot is required to apply new rules."
+      when: audit_status.stdout is search('enabled[^\\n]*2')

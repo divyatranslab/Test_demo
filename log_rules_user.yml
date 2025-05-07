@@ -1,0 +1,51 @@
+---
+- name: Ensure audit rules log actions as another user (CIS 5.2.3.2)
+  hosts: all
+  become: yes
+  vars:
+    audit_rule_file: /etc/audit/rules.d/50-user_emulation.rules
+ 
+  tasks:
+    - name: Backup existing /etc/audit/audit.rules
+      copy:
+        src: /etc/audit/audit.rules
+        dest: /etc/audit/audit.rules.bak
+        remote_src: yes
+      ignore_errors: yes
+ 
+    - name: Remove conflicting user emulation rules from audit.rules
+      lineinfile:
+        path: /etc/audit/audit.rules
+        state: absent
+        regexp: '.*euid!=uid.*execve.*user_emulation.*'
+      ignore_errors: yes
+ 
+    - name: Remove old user emulation rule file if exists
+      file:
+        path: "{{ audit_rule_file }}"
+        state: absent
+      ignore_errors: yes
+ 
+    - name: Create audit rule for user emulation
+      copy:
+        dest: "{{ audit_rule_file }}"
+        content: |
+          -a always,exit -F arch=b64 -C euid!=uid -F auid!=unset -S execve -k user_emulation
+          -a always,exit -F arch=b32 -C euid!=uid -F auid!=unset -S execve -k user_emulation
+        owner: root
+        group: root
+        mode: '0640'
+ 
+    - name: Load new audit rules
+      command: augenrules --load
+      register: augenrules_result
+      failed_when: "'There was an error' in augenrules_result.stderr and 'Rule exists' not in augenrules_result.stderr"
+ 
+    - name: Check if auditd is in immutable mode (enabled = 2)
+      shell: auditctl -s | awk '/^enabled/ { if ($2 == 2) print "yes"; else print "no" }'
+      register: reboot_required
+ 
+    - name: Warn if reboot is required
+      debug:
+        msg: "⚠️ A reboot is required to load user emulation audit rules."
+      when: reboot_required.stdout == "yes"

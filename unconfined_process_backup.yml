@@ -1,0 +1,39 @@
+---
+- name: Backup unconfined SELinux services
+  hosts: all
+  become: true
+  vars:
+    backup_dir: "/var/backups/selinux_unconfined"
+    timestamp: "{{ lookup('pipe', 'date +%Y%m%d%H%M%S') }}"
+    backup_file: "{{ backup_dir }}/unconfined_services_{{ timestamp }}.txt"
+
+  tasks:
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Check for unconfined services
+      shell: "/bin/ps -eZ | /bin/grep unconfined_service_t | /bin/awk -F: '{ print $NF }'"
+      register: unconfined_services
+      changed_when: false
+
+    - name: Set fact if unconfined services exist
+      set_fact:
+        unconfined_list: "{{ unconfined_services.stdout_lines | unique }}"
+      when: unconfined_services.stdout != ""
+
+    - name: Create timestamped backup file only if unconfined services exist
+      copy:
+        content: |
+          {{ ansible_date_time.iso8601 }}
+          {{ unconfined_list | join('\n') }}
+        dest: "{{ backup_file }}"
+        mode: '0644'
+      when: unconfined_services.stdout != ""
+
+    - name: Display backup file location
+      debug:
+        msg: "Backup saved to {{ backup_file }}"
+      when: unconfined_services.stdout != ""

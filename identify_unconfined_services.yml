@@ -1,0 +1,24 @@
+---
+- name: Identify unconfined services
+  hosts: all
+  become: true
+  tasks:
+    - name: Get the list of unconfined services
+      shell: |
+        /bin/ps -eZ | /bin/grep unconfined_service_t | /bin/awk '{ print $NF } END {if (NR == 0) print "none"}'
+      register: unconfined_services
+      changed_when: false
+
+    - name: Check if unconfined services exist
+      set_fact:
+        services_exist: "{{ unconfined_services.stdout != 'none' }}"
+
+    - name: Print unconfined services if found
+      debug:
+        msg: "Unconfined services detected: {{ unconfined_services.stdout }}"
+      when: services_exist
+
+    - name: Warn if no unconfined services are found
+      debug:
+        msg: "Warning: No unconfined services detected!"
+      when: not services_exist
